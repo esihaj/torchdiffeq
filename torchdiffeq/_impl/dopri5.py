@@ -58,8 +58,7 @@ def _ta_append(list_of_tensors, value):
 class Dopri5Solver(AdaptiveStepsizeODESolver):
 
     def __init__(
-        self, func, y0, rtol, atol, first_step=None, safety=0.9, ifactor=10.0, dfactor=0.2, max_num_steps=2**31 - 1,
-        **unused_kwargs
+            self, func, y0, rtol, atol, first_step=None, safety=0.9, ifactor=10.0, dfactor=0.2, max_num_steps=2**31 - 1, save_address: str='', **unused_kwargs
     ):
         _handle_unused_kwargs(self, unused_kwargs)
         del unused_kwargs
@@ -73,6 +72,7 @@ class Dopri5Solver(AdaptiveStepsizeODESolver):
         self.ifactor = _convert_to_tensor(ifactor, dtype=torch.float64, device=y0[0].device)
         self.dfactor = _convert_to_tensor(dfactor, dtype=torch.float64, device=y0[0].device)
         self.max_num_steps = _convert_to_tensor(max_num_steps, dtype=torch.int32, device=y0[0].device)
+        self.save_address = save_address
 
     def before_integrate(self, t):
         f0 = self.func(t[0].type_as(self.y0[0]), self.y0)
@@ -114,6 +114,8 @@ class Dopri5Solver(AdaptiveStepsizeODESolver):
         y_next = y1 if accept_step else y0
         f_next = f1 if accept_step else f0
         t_next = t0 + dt if accept_step else t0
+        if accept_step and self.save_address != '':
+            torch.save({'y0': y0, 't0': t0, 'f0': f0, 'y1': y1, 't1': t_next, 'f1': f_next}, self.save_address.format(t0.item()))
         interp_coeff = _interp_fit_dopri5(y0, y1, k, dt) if accept_step else interp_coeff
         dt_next = _optimal_step_size(
             dt, mean_sq_error_ratio, safety=self.safety, ifactor=self.ifactor, dfactor=self.dfactor, order=5

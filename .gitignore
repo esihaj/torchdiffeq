@@ -2,3 +2,6 @@
 .installed.cfg
 *.egg
 *__pycache__*
+examples/experiment1/
+examples/dump/
+examples/.data/

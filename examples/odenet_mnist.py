@@ -8,22 +8,27 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
+from tqdm import trange
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--network', type=str, choices=['resnet', 'odenet'], default='odenet')
 parser.add_argument('--tol', type=float, default=1e-3)
 parser.add_argument('--adjoint', type=eval, default=False, choices=[True, False])
 parser.add_argument('--downsampling-method', type=str, default='res', choices=['conv', 'res'])
-parser.add_argument('--nepochs', type=int, default=160)
+parser.add_argument('--nepochs', type=int, default=50)
+parser.add_argument('--iter_save_period', type=int, default=100000)
 parser.add_argument('--data_aug', type=eval, default=True, choices=[True, False])
+parser.add_argument('--fashion', type=eval, default=True, choices=[True, False])
 parser.add_argument('--lr', type=float, default=0.1)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--test_batch_size', type=int, default=1000)
+parser.add_argument('--network_size', type=int, default=16)
 
 parser.add_argument('--save', type=str, default='./experiment1')
 parser.add_argument('--debug', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
 args = parser.parse_args()
+iter_save_period = args.iter_save_period
 
 if args.adjoint:
     from torchdiffeq import odeint_adjoint as odeint
@@ -42,8 +47,31 @@ def conv1x1(in_planes, out_planes, stride=1):
 
 
 def norm(dim):
-    return nn.GroupNorm(min(32, dim), dim)
+    return nn.GroupNorm(min(8, dim), dim)
 
+
+class ODEfunc(nn.Module):
+
+    def __init__(self, dim):
+        super(ODEfunc, self).__init__()
+        self.norm1 = norm(dim)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv1 = conv3x3(dim, dim)
+        self.norm2 = norm(dim)
+        self.conv2 = conv3x3(dim, dim)
+        self.norm3 = norm(dim)
+        self.nfe = 0
+
+    def forward(self, t, x):
+        self.nfe += 1
+        out = self.norm1(x)
+        out = self.relu(out)
+        out = self.conv1(out)
+        out = self.norm2(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.norm3(out)
+        return out
 
 class ResBlock(nn.Module):
     expansion = 1
@@ -72,31 +100,6 @@ class ResBlock(nn.Module):
 
         return out + shortcut
 
-
-class ODEfunc(nn.Module):
-
-    def __init__(self, dim):
-        super(ODEfunc, self).__init__()
-        self.norm1 = norm(dim)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv1 = conv3x3(dim, dim)
-        self.norm2 = norm(dim)
-        self.conv2 = conv3x3(dim, dim)
-        self.norm3 = norm(dim)
-        self.nfe = 0
-
-    def forward(self, t, x):
-        self.nfe += 1
-        out = self.norm1(x)
-        out = self.relu(out)
-        out = self.conv1(out)
-        out = self.norm2(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.norm3(out)
-        return out
-
-
 class ODEBlock(nn.Module):
 
     def __init__(self, odefunc):
@@ -106,7 +109,12 @@ class ODEBlock(nn.Module):
 
     def forward(self, x):
         self.integration_time = self.integration_time.type_as(x)
-        out = odeint(self.odefunc, x, self.integration_time, rtol=args.tol, atol=args.tol)
+        if itr % iter_save_period == 0:
+            os.makedirs('./dump/{}'.format(itr), exist_ok=True)
+            address = '/home/luke/mount/torchdiffeq/examples/dump/{}/{}.pth'.format(itr, '{}')
+        else:
+            address = ''
+        out = odeint(self.odefunc, x, self.integration_time, rtol=args.tol, atol=args.tol, options={'save_address': address}, method='dopri5')
         return out[1]
 
     @property
@@ -161,19 +169,25 @@ def get_mnist_loaders(data_aug=False, batch_size=128, test_batch_size=1000, perc
     transform_test = transforms.Compose([
         transforms.ToTensor(),
     ])
+    if args.fashion == True:
+        db = datasets.FashionMNIST
+        address = '.data/fmnist'
+    else:
+        db = datasets.MNIST
+        address = '.data/mnist'
 
     train_loader = DataLoader(
-        datasets.MNIST(root='.data/mnist', train=True, download=True, transform=transform_train), batch_size=batch_size,
+        db(root=address, train=True, download=True, transform=transform_train), batch_size=batch_size,
         shuffle=True, num_workers=2, drop_last=True
     )
 
     train_eval_loader = DataLoader(
-        datasets.MNIST(root='.data/mnist', train=True, download=True, transform=transform_test),
+        db(root=address, train=True, download=True, transform=transform_test),
         batch_size=test_batch_size, shuffle=False, num_workers=2, drop_last=True
     )
 
     test_loader = DataLoader(
-        datasets.MNIST(root='.data/mnist', train=False, download=True, transform=transform_test),
+        db(root=address, train=False, download=True, transform=transform_test),
         batch_size=test_batch_size, shuffle=False, num_workers=2, drop_last=True
     )
 
@@ -246,14 +260,6 @@ def get_logger(logpath, filepath, package_files=[], displaying=True, saving=True
         console_handler = logging.StreamHandler()
         console_handler.setLevel(level)
         logger.addHandler(console_handler)
-    logger.info(filepath)
-    with open(filepath, "r") as f:
-        logger.info(f.read())
-
-    for f in package_files:
-        logger.info(f)
-        with open(f, "r") as package_f:
-            logger.info(package_f.read())
 
     return logger
 
@@ -282,16 +288,15 @@ if __name__ == '__main__':
         downsampling_layers = [
             nn.Conv2d(1, 64, 3, 1),
             ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
-            ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
+            ResBlock(64, args.network_size, stride=2, downsample=conv1x1(64, args.network_size, 2)),
         ]
 
-    feature_layers = [ODEBlock(ODEfunc(64))] if is_odenet else [ResBlock(64, 64) for _ in range(6)]
-    fc_layers = [norm(64), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(64, 10)]
+    feature_layers = [ODEBlock(ODEfunc(args.network_size))] if is_odenet else [ResBlock(64, 64) for _ in range(6)]
+    fc_layers = [norm(args.network_size), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(args.network_size, 10)]
 
     model = nn.Sequential(*downsampling_layers, *feature_layers, *fc_layers).to(device)
 
-    logger.info(model)
-    logger.info('Number of parameters: {}'.format(count_parameters(model)))
+    logger.info('Number of parameters: {}'.format(count_parameters(feature_layers[0])))
 
     criterion = nn.CrossEntropyLoss().to(device)
 
@@ -315,7 +320,7 @@ if __name__ == '__main__':
     b_nfe_meter = RunningAverageMeter()
     end = time.time()
 
-    for itr in range(args.nepochs * batches_per_epoch):
+    for itr in trange(args.nepochs * batches_per_epoch):
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr_fn(itr)
@@ -333,6 +338,8 @@ if __name__ == '__main__':
 
         loss.backward()
         optimizer.step()
+        if itr % iter_save_period == 0:
+            torch.save({'state': feature_layers[0].state_dict()}, './dump/{}/model.pth'.format(itr))
 
         if is_odenet:
             nfe_backward = feature_layers[0].nfe
@@ -343,8 +350,9 @@ if __name__ == '__main__':
             f_nfe_meter.update(nfe_forward)
             b_nfe_meter.update(nfe_backward)
         end = time.time()
+        torch.save({'state_dict': model.state_dict(), 'args': args}, os.path.join(args.save, 'model.pth'))
 
-        if itr % batches_per_epoch == 0:
+        if False and itr % batches_per_epoch == 0:
             with torch.no_grad():
                 train_acc = accuracy(model, train_eval_loader)
                 val_acc = accuracy(model, test_loader)
