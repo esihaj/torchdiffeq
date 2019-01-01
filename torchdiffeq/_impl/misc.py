@@ -18,7 +18,14 @@ def _flatten_convert_none_to_zeros(sequence, like_sequence):
 def _possibly_nonzero(x):
     return isinstance(x, torch.Tensor) or x != 0
 
-
+def print_item(x, name):
+    if type(x) == tuple or type(x) == list:
+        print(name + " tuple", len(x))
+        print_item(x[0], name + "[0]")
+    elif type(x) == torch.Tensor:
+        print(name + " tensor", x.size())
+    else:
+        print(name + "other: ", type(x))
 def _scaled_dot_product(scale, xs, ys):
     """Calculate a scaled, vector inner product between lists of Tensors."""
     # Using _possibly_nonzero lets us avoid wasted computation.
@@ -159,6 +166,10 @@ def _compute_error_ratio(error_estimate, error_tol=None, rtol=None, atol=None, y
 
 def _optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0, dfactor=0.2, order=5):
     """Calculate the optimal size for the next step."""
+    safety = _convert_to_tensor(safety, dtype=torch.float64, device=last_step.device)
+    ifactor = _convert_to_tensor(ifactor, dtype=torch.float64, device=last_step.device)
+    dfactor = _convert_to_tensor(dfactor, dtype=torch.float64, device=last_step.device)
+
     mean_error_ratio = max(mean_error_ratio)  # Compute step size based on highest ratio.
     if mean_error_ratio == 0:
         return last_step * ifactor
