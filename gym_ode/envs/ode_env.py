@@ -14,8 +14,8 @@ MODEL_LAYERS_NUM_DOWN_SAMPLE_START = 0
 MODEL_LAYERS_NUM_DOWN_SAMPLE_END = 2
 ODE_BLOCK_LAYER_NUM_FUNC = 0
 
-REWARD_ACCEPT = -1
-REWARD_REJECT = -1000
+REWARD_ACCEPT = -1.0
+REWARD_REJECT = -1000.0
 DONE_TIME = 1.0
 
 
@@ -39,7 +39,7 @@ class OdeEnv(gym.Env):
     def reset(self, x, atol, rtol):
         self.dt_rnn.reset()
 
-        t0 = torch.tensor([0.0]).repeat(x.size(0)).double()
+        t0 = torch.tensor([0.0]).repeat(x.size(0))#.double()
         t0 = t0.view(-1, 1, 1, 1)
         y0 = self.init_net(x)
         f0 = self.func_net(t0[0].type_as(y0[0]), (y0, ))
@@ -50,11 +50,11 @@ class OdeEnv(gym.Env):
         self.atol = self.atol if _is_iterable(atol) else [atol] * len(y0)
 
     def take_action(self, is_first=False):
-        if is_first:
-            t0, y0, f0 = self.observation_space[0]
-            return _select_initial_step(self.func_net, t0[0], y0, 4, self.rtol[0], self.atol[0], f0=f0).to(t0).repeat(y0[0].size(0)).double()
-        else:
-            return _optimal_step_size(self.last_action[0].double(), self.mean_sq_error_ratio).repeat(self.last_action.size(0)).double()
+        # if is_first:
+        #     t0, y0, f0 = self.observation_space[0]
+        #     return _select_initial_step(self.func_net, t0[0], y0, 4, self.rtol[0], self.atol[0], f0=f0).to(t0).repeat(y0[0].size(0)).double()
+        # else:
+        #     return _optimal_step_size(self.last_action[0].double(), self.mean_sq_error_ratio).repeat(self.last_action.size(0)).double()
         out = self.dt_rnn(self.observation_space[1])
         return self.distribution(out[:, 0], out[:, 1]).sample()
 
@@ -63,7 +63,7 @@ class OdeEnv(gym.Env):
         y0 = self.observation_space[0][1]
         f0 = self.observation_space[0][2]
 
-        self.last_action = action
+        # self.last_action = action
         action_reshaped = action.view(-1, 1, 1, 1)
         # print("call rk", y0.size())
         y1, f1, y1_error, k, observations = _runge_kutta_step(self.func_net, y0, f0, t0, action_reshaped, self.tableau)
@@ -71,7 +71,7 @@ class OdeEnv(gym.Env):
         self.observation_space = ((t1, y1, f1), observations)
 
         reward, done = self.calculate_reward(y1_error, y0, y1)
-        done = not done or (t1 > DONE_TIME).all()
+        done = ((t1 > DONE_TIME).squeeze() + (1 - done)) > 0
         return observations, reward, done, None
 
     def calculate_reward(self, y1_error, y0, y1):
@@ -79,12 +79,10 @@ class OdeEnv(gym.Env):
         #                     Error Ratio                      #
         ########################################################
         mean_sq_error_ratio = _compute_error_ratio(y1_error, atol=self.atol, rtol=self.rtol, y0=y0, y1=y1)
-        accept_step = (torch.tensor(mean_sq_error_ratio) <= 1).all()
-        self.mean_sq_error_ratio = mean_sq_error_ratio
-
-        if accept_step:
-            return REWARD_ACCEPT, accept_step
-        return REWARD_REJECT, accept_step
+        accept_step = mean_sq_error_ratio[0] <= 1
+        # self.mean_sq_error_ratio = mean_sq_error_ratio
+        accept_step_float = accept_step.float()
+        return accept_step_float * REWARD_ACCEPT + (1.0 - accept_step_float) * REWARD_REJECT, accept_step
 
     def render(self, mode='human'):
         pass

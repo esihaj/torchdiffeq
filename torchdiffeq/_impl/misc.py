@@ -160,7 +160,7 @@ def _compute_error_ratio(error_estimate, error_tol=None, rtol=None, atol=None, y
             for atol_, rtol_, y0_, y1_ in zip(atol, rtol, y0, y1)
         )
     error_ratio = tuple(error_estimate_ / error_tol_ for error_estimate_, error_tol_ in zip(error_estimate, error_tol))
-    mean_sq_error_ratio = tuple(torch.mean(error_ratio_ * error_ratio_) for error_ratio_ in error_ratio)
+    mean_sq_error_ratio = tuple(torch.mean((error_ratio_ * error_ratio_).view(error_ratio_.size(0), -1), dim=1) for error_ratio_ in error_ratio)
     return mean_sq_error_ratio
 
 

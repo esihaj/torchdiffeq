@@ -44,9 +44,14 @@ if __name__ == '__main__':
         env.reset(x, args.tol, args.tol)
         done = False
         print('new batch')
-        first = True
+        # first = True
+        reward_list = []
+        done_list = []
         while not done:
-            dt = env.take_action(first)
+            #dt = env.take_action(first)
+            dt = env.take_action()
             _, reward, done, _ = env.step(dt)
-            first = False
-            print(reward)
+            reward_list.append(reward)
+            done_list.append(done)
+            done = done.all().item()
+            # first = False
