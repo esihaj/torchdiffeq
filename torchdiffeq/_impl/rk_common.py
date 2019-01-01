@@ -1,7 +1,7 @@
 # Based on https://github.com/tensorflow/tensorflow/tree/master/tensorflow/contrib/integrate
+import torch
 import collections
 from .misc import _scaled_dot_product, _convert_to_tensor
-
 _ButcherTableau = collections.namedtuple('_ButcherTableau', 'alpha beta c_sol c_error')
 
 
@@ -25,8 +25,8 @@ def _runge_kutta_step(func, y0, f0, t0, dt, tableau):
     Args:
         func: Function to evaluate like `func(t, y)` to compute the time derivative
             of `y`.
-        y0: Tensor initial value for the state.
-        f0: Tensor initial value for the derivative, computed from `func(t0, y0)`.
+        y0: tuple(Tensor initial value for the state) with size 1.
+        f0: tuple(Tensor initial value for the derivative, computed from `func(t0, y0)`) with size 1.
         t0: float64 scalar Tensor giving the initial time.
         dt: float64 scalar Tensor giving the size of the desired time step.
         tableau: optional _ButcherTableau describing how to take the Runge-Kutta
@@ -38,7 +38,14 @@ def _runge_kutta_step(func, y0, f0, t0, dt, tableau):
         the Runge-Kutta step at `t1 = t0 + dt`, the derivative of the state at `t1`,
         estimated error at `t1`, and a list of Runge-Kutta coefficients `k` used for
         calculating these terms.
+
+    Params:
+        yi = tuple(tensor) w/ size 1
     """
+    t_list = []
+    y_list = []
+    f_list = []
+
     dtype = y0[0].dtype
     device = y0[0].device
 
@@ -48,7 +55,9 @@ def _runge_kutta_step(func, y0, f0, t0, dt, tableau):
     k = tuple(map(lambda x: [x], f0))
     for alpha_i, beta_i in zip(tableau.alpha, tableau.beta):
         ti = t0 + alpha_i * dt
+        t_list.append(ti)
         yi = tuple(y0_ + _scaled_dot_product(dt, beta_i, k_) for y0_, k_ in zip(y0, k))
+        y_list.append(yi[0])
         tuple(k_.append(f_) for k_, f_ in zip(k, func(ti, yi)))
 
     if not (tableau.c_sol[-1] == 0 and tableau.c_sol[:-1] == tableau.beta[-1]):
@@ -56,9 +65,14 @@ def _runge_kutta_step(func, y0, f0, t0, dt, tableau):
         yi = tuple(y0_ + _scaled_dot_product(dt, tableau.c_sol, k_) for y0_, k_ in zip(y0, k))
 
     y1 = yi
+    # y_list[-1] = y1
+
     f1 = tuple(k_[-1] for k_ in k)
+    f_list = k[0][1:]
     y1_error = tuple(_scaled_dot_product(dt, tableau.c_error, k_) for k_ in k)
-    return (y1, f1, y1_error, k)
+
+    observations = list(zip(t_list, y_list, f_list))
+    return y1, f1, y1_error, k, observations
 
 
 def rk4_step_func(func, t, dt, y, k1=None):
