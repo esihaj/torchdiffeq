@@ -110,8 +110,9 @@ class ODEBlock(nn.Module):
     def forward(self, x):
         self.integration_time = self.integration_time.type_as(x)
         if itr % iter_save_period == 0:
-            os.makedirs('./dump/{}'.format(itr), exist_ok=True)
-            address = '/home/luke/mount/torchdiffeq/examples/dump/{}/{}.pth'.format(itr, '{}')
+            # os.makedirs('./dump/{}'.format(itr), exist_ok=True)
+            # address = '/home/luke/mount/torchdiffeq/examples/dump/{}/{}.pth'.format(itr, '{}')
+            address = ''
         else:
             address = ''
         out = odeint(self.odefunc, x, self.integration_time, rtol=args.tol, atol=args.tol, options={'save_address': address}, method='dopri5')
@@ -264,16 +265,10 @@ def get_logger(logpath, filepath, package_files=[], displaying=True, saving=True
     return logger
 
 
-if __name__ == '__main__':
-
-    makedirs(args.save)
-    logger = get_logger(logpath=os.path.join(args.save, 'logs'), filepath=os.path.abspath(__file__))
-    logger.info(args)
-
+def create_mnist_model():
+    global device, is_odenet
     device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
-
     is_odenet = args.network == 'odenet'
-
     if args.downsampling_method == 'conv':
         downsampling_layers = [
             nn.Conv2d(1, 64, 3, 1),
@@ -290,14 +285,22 @@ if __name__ == '__main__':
             ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
             ResBlock(64, args.network_size, stride=2, downsample=conv1x1(64, args.network_size, 2)),
         ]
-
     feature_layers = [ODEBlock(ODEfunc(args.network_size))] if is_odenet else [ResBlock(64, 64) for _ in range(6)]
-    fc_layers = [norm(args.network_size), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(args.network_size, 10)]
-
+    fc_layers = [norm(args.network_size), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(),
+                 nn.Linear(args.network_size, 10)]
     model = nn.Sequential(*downsampling_layers, *feature_layers, *fc_layers).to(device)
 
-    logger.info('Number of parameters: {}'.format(count_parameters(feature_layers[0])))
+    return model, feature_layers
 
+
+if __name__ == '__main__':
+
+    makedirs(args.save)
+    logger = get_logger(logpath=os.path.join(args.save, 'logs'), filepath=os.path.abspath(__file__))
+    logger.info(args)
+
+    model, feature_layers = create_mnist_model()
+    logger.info('Number of parameters: {}'.format(count_parameters(feature_layers[0])))
     criterion = nn.CrossEntropyLoss().to(device)
 
     train_loader, test_loader, train_eval_loader = get_mnist_loaders(
