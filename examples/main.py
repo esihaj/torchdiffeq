@@ -44,6 +44,7 @@ def finish_episode(reward_list, log_prob_list):
     policy_loss = torch.cat(policy_loss).sum()
     policy_loss.backward()
     optimizer.step()
+    return policy_loss
 
 
 if __name__ == '__main__':
@@ -70,15 +71,12 @@ if __name__ == '__main__':
         y = y.to(device)
         env.reset(x, args.tol, args.tol)
         done = False
-        print('new batch')
         # first = True
         reward_list = []
         log_prob_list = []
         done_list = []
         count = 0
-        while not done:
-            count +=1
-            print(count)
+        while not done and count < 10:
             #dt = env.take_action(first)
             dt, log_prob = env.take_action()
             _, reward, done, _ = env.step(dt)
@@ -88,11 +86,7 @@ if __name__ == '__main__':
             done_list.append(done)
             done = done.all().item()
             # first = False
-        finish_episode(reward_list, log_prob_list)
-        if itr % batches_per_epoch == 0:
-                print(
-                    "Epoch {:04d} | "
-                    "Train Acc {:.4f} | Test Acc {:.4f}".format(
-                        itr // batches_per_epoch, reward_list
-                    )
-                )
+            count += 1
+        loss = finish_episode(reward_list, log_prob_list)
+        # if itr % batches_per_epoch == 0:
+        print("loss", loss)
