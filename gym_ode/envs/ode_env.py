@@ -56,7 +56,9 @@ class OdeEnv(gym.Env):
         # else:
         #     return _optimal_step_size(self.last_action[0].double(), self.mean_sq_error_ratio).repeat(self.last_action.size(0)).double()
         out = self.dt_rnn(self.observation_space[1])
-        return self.distribution(out[:, 0], out[:, 1]).sample()
+        dist = self.distribution(out[:, 0], out[:, 1])
+        dt = dist.sample()
+        return dt, dist.log_prob(dt)
 
     def step(self, action):
         t0 = self.observation_space[0][0]
