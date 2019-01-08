@@ -45,7 +45,7 @@ def make_one_hot(labels, C=2):
     target : torch.autograd.Variable of torch.cuda.FloatTensor
         N x C x H x W, where C is class number. One-hot encoded.
     '''
-    one_hot = torch.FloatTensor(labels.size(0), C).zero_().to(labels)
+    one_hot = torch.zeros(labels.size(0), C).to(labels)
     target = one_hot.scatter_(1, labels.data, 1)
     return target
 
@@ -53,14 +53,11 @@ def make_one_hot(labels, C=2):
 def finish_episode(reward_list, done_list, log_prob_list):
     global optimizer
     episode_length = len(done_list)
-    batch_size = len(done_list[0])
-    saved_done_list = done_list
     done_list = torch.stack(done_list, dim=0)
     first_done = done_list.argmin(dim=0) + 1
     first_done[first_done == episode_length] = 0
     first_done = make_one_hot(first_done.unsqueeze(1), episode_length)
     done_list = torch.where(first_done.transpose(1, 0) == 1, torch.zeros_like(done_list), done_list)
-    # done_list[first_done.transpose(1, 0)] = 4
     done_list = done_list.view(-1)
     R = 0
     policy_loss = []
@@ -69,16 +66,15 @@ def finish_episode(reward_list, done_list, log_prob_list):
         R = r + args.gamma * R
         rewards.insert(0, R)
     rewards = torch.cat(rewards, dim=0)
-    masked_rewards = r[1-done_list]
-
-    rewards = (rewards - rewards.mean(dim=0)) / (rewards.std(dim=0) + eps)
-    for log_prob, reward in zip(log_prob_list, rewards):
-        policy_loss.append(-log_prob * reward)
+    rewards = rewards[1-done_list]
+    rewards = (rewards - rewards.mean()) / (rewards.std() + eps)
+    log_prob = torch.cat(log_prob_list, dim=0)
+    log_prob = log_prob[1-done_list]
     optimizer.zero_grad()
-    policy_loss = torch.cat(policy_loss).sum()
+    policy_loss = (-log_prob * rewards).sum()
     policy_loss.backward()
     optimizer.step()
-    return policy_loss
+    return policy_loss.item()
 
 
 if __name__ == '__main__':
@@ -105,13 +101,11 @@ if __name__ == '__main__':
         y = y.to(device)
         env.reset(x, args.tol, args.tol)
         done = False
-        # first = True
         reward_list = []
         log_prob_list = []
         done_list = []
         count = 0
         while not done and count < 10:
-            #dt = env.take_action(first)
             dt, log_prob = env.take_action()
             prev_done = done_list[-1] if count > 0 else None
             _, reward, done, _ = env.step(dt, prev_done)
@@ -120,8 +114,6 @@ if __name__ == '__main__':
             reward_list.append(reward)
             done_list.append(done)
             done = done.all().item()
-            # first = False
             count += 1
         loss = finish_episode(reward_list, done_list, log_prob_list)
-        # if itr % batches_per_epoch == 0:
         print("loss", loss)
