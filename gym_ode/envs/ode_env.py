@@ -60,7 +60,7 @@ class OdeEnv(gym.Env):
         dt = dist.sample()
         return dt, dist.log_prob(dt)
 
-    def step(self, action):
+    def step(self, action, prev_done=None):
         t0 = self.observation_space[0][0]
         y0 = self.observation_space[0][1]
         f0 = self.observation_space[0][2]
@@ -73,8 +73,12 @@ class OdeEnv(gym.Env):
         self.observation_space = ((t1, y1, f1), observations)
 
         reward, done = self.calculate_reward(y1_error, y0, y1)
-        done = ((t1 > DONE_TIME).squeeze() + (1 - done)) > 0
-        return observations, reward, done, None
+        done = (((t1 > DONE_TIME).squeeze() + (1 - done)) > 0)
+        if prev_done is not None:
+            new_done = (done + prev_done) > 0
+        else: new_done = done
+
+        return observations, reward, new_done, None
 
     def calculate_reward(self, y1_error, y0, y1):
         ########################################################
