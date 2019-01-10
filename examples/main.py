@@ -6,14 +6,14 @@ import argparse
 import gym
 import gym_ode
 import torch.optim as optim
+import pickle
 from odenet_mnist import create_mnist_model, get_mnist_loaders, inf_generator
 from time_rnn import TimeRNN
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--tol', type=float, default=1e-3)
 parser.add_argument('--gamma', type=float, default=1.0, metavar='G',
-help='discount factor (default: 0.99)')
+                    help='discount factor (default: 0.99)')
 parser.add_argument('--nepochs', type=int, default=50)
 parser.add_argument('--iter_save_period', type=int, default=100000)
 parser.add_argument('--lr', type=float, default=0.01)
@@ -60,21 +60,21 @@ def finish_episode(reward_list, done_list, log_prob_list):
     done_list = torch.where(first_done.transpose(1, 0) == 1, torch.zeros_like(done_list), done_list)
     done_list = done_list.view(-1)
     R = 0
-    policy_loss = []
     rewards = []
     for r in reward_list:
         R = r + args.gamma * R
-        rewards.insert(0, R)
+        rewards.append(R)  # rewards.insert(0, R)
     rewards = torch.cat(rewards, dim=0)
-    rewards = rewards[1-done_list]
+    rewards = rewards[1 - done_list]
+    rewards_mean = rewards.mean().item()
     rewards = (rewards - rewards.mean()) / (rewards.std() + eps)
     log_prob = torch.cat(log_prob_list, dim=0)
-    log_prob = log_prob[1-done_list]
+    log_prob = log_prob[1 - done_list]
     optimizer.zero_grad()
     policy_loss = (-log_prob * rewards).sum()
     policy_loss.backward()
     optimizer.step()
-    return policy_loss.item()
+    return policy_loss.item(), rewards_mean
 
 
 if __name__ == '__main__':
@@ -94,6 +94,9 @@ if __name__ == '__main__':
 
     data_gen = inf_generator(train_loader)
     batches_per_epoch = len(train_loader)
+
+    all_losses = []
+    all_reward_means = []
 
     for itr in trange(args.nepochs * batches_per_epoch):
         x, y = data_gen.__next__()
@@ -115,5 +118,10 @@ if __name__ == '__main__':
             done_list.append(done)
             done = done.all().item()
             count += 1
-        loss = finish_episode(reward_list, done_list, log_prob_list)
-        print("loss", loss)
+        loss, reward_mean = finish_episode(reward_list, done_list, log_prob_list)
+        all_losses.append(loss)
+        all_reward_means.append(reward_mean)
+        if itr % 100 == 0:
+            with open("loss_and_mean.pkl", "rb") as f:
+                pickle.dump({"loss": all_losses, "mean": all_reward_means}, f)
+                print("saved[%d]" % itr)
